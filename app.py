@@ -462,6 +462,27 @@ def get_friends():
     return response.data or []
 
 
+def get_question_stats():
+    response = supabase.rpc("get_my_question_stats").execute()
+    rows = response.data or []
+    if rows:
+        return rows[0]
+    return {"lifetime_count": 0, "today_count": 0}
+
+
+def get_friends_daily_activity():
+    response = supabase.rpc(
+        "get_friends_daily_question_counts"
+    ).execute()
+    return response.data or []
+
+
+def save_question_attempts(attempts):
+    if not attempts:
+        return
+    supabase.table("question_attempts").insert(attempts).execute()
+
+
 def respond_to_friend_request(request_id, status):
     response = (
         supabase.table("friend_requests")
@@ -633,16 +654,26 @@ if page == "Overview":
     c3.metric("Pending hours", f"{pending_hours:.1f} hrs")
     c4.metric("Task completion", f"{completion_ratio * 100:.0f}%")
 
-    # Question activity slots — Supabase tracking will be connected next.
+    # Live question activity from Supabase
+    try:
+        question_stats = get_question_stats()
+        lifetime_questions = int(question_stats.get("lifetime_count") or 0)
+        todays_questions = int(question_stats.get("today_count") or 0)
+    except Exception as e:
+        lifetime_questions = "—"
+        todays_questions = "—"
+        st.warning("Question statistics could not be loaded.")
+        st.caption(str(e))
+
     q1, q2 = st.columns(2)
     q1.metric(
         "Lifetime Questions Solved",
-        "—",
+        lifetime_questions,
         help="Total questions attempted in Quiz Arena and PYQ Vault since account creation."
     )
     q2.metric(
         "Today's Questions",
-        "—",
+        todays_questions,
         help="Questions attempted today across Quiz Arena and PYQ Vault."
     )
 
@@ -1010,6 +1041,34 @@ elif page == "Quiz Arena":
             if st.session_state.answers.get(i) == options[correct]
         )
 
+        # Save every answered question as one attempt.
+        # Correct and incorrect answers both count; unanswered questions do not.
+        attempt_rows = []
+        for i, (_, _, options, correct) in enumerate(questions):
+            chosen_answer = st.session_state.answers.get(i)
+            if chosen_answer is not None:
+                attempt_rows.append({
+                    "user_id": user_id,
+                    "source": "Quiz Arena",
+                    "question_key": f"quiz_arena_sample_v1_q{i + 1}",
+                    "is_correct": chosen_answer == options[correct]
+                })
+
+        try:
+            save_question_attempts(attempt_rows)
+            st.session_state["quiz_tracking_error"] = None
+            st.session_state["quiz_tracking_saved"] = len(attempt_rows)
+        except Exception as e:
+            st.session_state["quiz_tracking_error"] = str(e)
+
+    if st.session_state.get("quiz_tracking_error"):
+        st.error("Quiz result saved on screen, but attempt tracking failed.")
+        st.caption(st.session_state["quiz_tracking_error"])
+    elif st.session_state.get("quiz_tracking_saved") is not None and st.session_state.quiz_submitted:
+        st.caption(
+            f"📊 {st.session_state.quiz_tracking_saved} question attempt(s) saved to your RankUp account."
+        )
+
     if st.session_state.quiz_submitted:
         score = st.session_state.get("quiz_score", 0)
 
@@ -1028,6 +1087,8 @@ elif page == "Quiz Arena":
         if st.button("Try again"):
             st.session_state.answers = {}
             st.session_state.quiz_submitted = False
+            st.session_state["quiz_tracking_saved"] = None
+            st.session_state["quiz_tracking_error"] = None
 
             for i in range(len(questions)):
                 key = f"q_{i}"
@@ -1170,6 +1231,11 @@ elif page == "Friends Zone":
 
     try:
         friends = get_friends()
+        daily_activity_rows = get_friends_daily_activity()
+        daily_activity = {
+            str(row.get("friend_id")): int(row.get("questions_today") or 0)
+            for row in daily_activity_rows
+        }
 
         if not friends:
             st.info(
@@ -1191,9 +1257,15 @@ elif page == "Friends Zone":
                     st.write(f"Goal: {friend['study_goal']}")
 
                 activity_col1, activity_col2 = st.columns([1, 2])
-                activity_col1.metric("Questions today", "—")
+                friend_questions_today = daily_activity.get(
+                    str(friend.get("id") or friend.get("friend_id")), 0
+                )
+                activity_col1.metric(
+                    "Questions today",
+                    friend_questions_today
+                )
                 activity_col2.caption(
-                    "Daily activity count will appear here once tracking is enabled."
+                    "Attempts made today across Quiz Arena and PYQ Vault."
                 )
 
     except Exception as e:
