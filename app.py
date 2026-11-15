@@ -633,6 +633,19 @@ if page == "Overview":
     c3.metric("Pending hours", f"{pending_hours:.1f} hrs")
     c4.metric("Task completion", f"{completion_ratio * 100:.0f}%")
 
+    # Question activity slots — Supabase tracking will be connected next.
+    q1, q2 = st.columns(2)
+    q1.metric(
+        "Lifetime Questions Solved",
+        "—",
+        help="Total questions attempted in Quiz Arena and PYQ Vault since account creation."
+    )
+    q2.metric(
+        "Today's Questions",
+        "—",
+        help="Questions attempted today across Quiz Arena and PYQ Vault."
+    )
+
     left, right = st.columns([1.45, 1])
 
     with left:
@@ -1150,6 +1163,10 @@ elif page == "Friends Zone":
 
     st.markdown("---")
     st.markdown("#### My friends")
+    st.markdown("#### 📊 Today's Activity")
+    st.caption(
+        "Daily question attempts for you and your accepted friends will appear here."
+    )
 
     try:
         friends = get_friends()
@@ -1172,6 +1189,12 @@ elif page == "Friends Zone":
 
                 if friend.get("study_goal"):
                     st.write(f"Goal: {friend['study_goal']}")
+
+                activity_col1, activity_col2 = st.columns([1, 2])
+                activity_col1.metric("Questions today", "—")
+                activity_col2.caption(
+                    "Daily activity count will appear here once tracking is enabled."
+                )
 
     except Exception as e:
         st.error("Could not load your friends.")
