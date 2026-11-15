@@ -1,3 +1,7 @@
+
+
+
+
 import streamlit as st
 import html
 from datetime import date
@@ -483,6 +487,21 @@ def save_question_attempts(attempts):
     supabase.table("question_attempts").insert(attempts).execute()
 
 
+def load_pyq_questions(chapter, year, exam_type):
+    response = (
+        supabase.table("pyq_questions")
+        .select("id,chapter,exam_type,year,session,question_number,question_text,options,correct_option,explanation,source_reference")
+        .eq("subject", "Physics")
+        .eq("chapter", chapter)
+        .eq("year", year)
+        .eq("exam_type", exam_type)
+        .eq("is_active", True)
+        .order("question_number")
+        .execute()
+    )
+    return response.data or []
+
+
 def respond_to_friend_request(request_id, status):
     response = (
         supabase.table("friend_requests")
@@ -933,46 +952,185 @@ elif page == "Smart Scheduler":
 # =========================================================
 elif page == "PYQ Vault":
 
-    st.markdown("### 📖 Interactive PYQ Vault")
-    st.write("Subject aur topic select karke practice set explore karo.")
+    st.markdown("### 📖 Physics PYQ Vault")
+    st.write("Chapter-wise JEE Main aur JEE Advanced questions practice karo.")
 
-    subject = st.selectbox(
-        "Choose subject",
-        ["Physics", "Chemistry", "Mathematics"]
-    )
+    physics_chapters = [
+        "Units & Measurements",
+        "Kinematics",
+        "Laws of Motion",
+        "Work, Energy & Power",
+        "Rotational Motion",
+        "Gravitation",
+        "Properties of Solids & Liquids",
+        "Thermodynamics",
+        "Kinetic Theory of Gases",
+        "Oscillations & Waves",
+        "Electrostatics",
+        "Current Electricity",
+        "Magnetic Effects of Current",
+        "Electromagnetic Induction & AC",
+        "Electromagnetic Waves",
+        "Optics",
+        "Dual Nature of Matter",
+        "Atoms & Nuclei",
+        "Semiconductor Electronics",
+    ]
 
-    topics = {
-        "Physics": [
-            "Units & Dimensions",
-            "Kinematics",
-            "Laws of Motion"
-        ],
-        "Chemistry": [
-            "Atomic Structure",
-            "Chemical Bonding",
-            "Mole Concept"
-        ],
-        "Mathematics": [
-            "Quadratic Equations",
-            "Limits",
-            "Straight Lines"
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    with filter_col1:
+        selected_chapter = st.selectbox(
+            "Choose chapter", physics_chapters, key="pyq_physics_chapter"
+        )
+    with filter_col2:
+        selected_year = st.selectbox(
+            "Choose year", [2026, 2025, 2024], key="pyq_physics_year"
+        )
+    with filter_col3:
+        selected_exam = st.selectbox(
+            "Choose exam", ["JEE Main", "JEE Advanced"], key="pyq_physics_exam"
+        )
+
+    try:
+        pyq_questions = load_pyq_questions(
+            selected_chapter, selected_year, selected_exam
+        )
+    except Exception as e:
+        st.error("Could not load questions from the PYQ database.")
+        st.caption(str(e))
+        pyq_questions = []
+
+    if not pyq_questions:
+        st.info(
+            f"Abhi {selected_year} {selected_exam} ke {selected_chapter} "
+            "questions database mein add nahi hue hain. Verified PYQs add hote hi "
+            "yahan automatically dikhne lagenge."
+        )
+        st.caption(
+            "Question bank empty hai — yahan koi fabricated ya demo question nahi dikhaya jayega."
+        )
+    else:
+        state_key = (
+            f"pyq_index_{selected_chapter}_{selected_year}_"
+            f"{selected_exam.replace(' ', '_')}"
+        )
+        if state_key not in st.session_state:
+            st.session_state[state_key] = 0
+
+        question_index = min(
+            st.session_state[state_key], len(pyq_questions) - 1
+        )
+        question = pyq_questions[question_index]
+        question_id = str(question["id"])
+        answer_key = f"pyq_selected_{question_id}"
+        feedback_key = f"pyq_feedback_{question_id}"
+
+        st.progress(
+            (question_index + 1) / len(pyq_questions),
+            text=f"Question {question_index + 1} of {len(pyq_questions)}"
+        )
+        st.caption(
+            f"{question.get('exam_type')} · {question.get('year')} · "
+            f"{question.get('chapter')}"
+            + (f" · {question.get('session')}" if question.get("session") else "")
+        )
+
+        st.markdown("---")
+        st.markdown(f"**Q{question.get('question_number') or question_index + 1}. {question.get('question_text', '')}**")
+
+        options = question.get("options") or {}
+        if isinstance(options, list):
+            option_map = {
+                chr(65 + i): value for i, value in enumerate(options[:4])
+            }
+        else:
+            option_map = options
+
+        option_labels = [
+            f"{letter}. {option_map.get(letter, '')}"
+            for letter in ["A", "B", "C", "D"]
+            if option_map.get(letter) is not None
         ]
-    }
+        label_to_letter = {
+            f"{letter}. {option_map.get(letter, '')}": letter
+            for letter in ["A", "B", "C", "D"]
+            if option_map.get(letter) is not None
+        }
 
-    topic = st.selectbox("Choose chapter", topics[subject])
+        if option_labels:
+            st.radio(
+                "Select your answer",
+                option_labels,
+                key=answer_key,
+                index=None
+            )
+            if st.button("Check Answer", key=f"pyq_check_{question_id}"):
+                chosen_label = st.session_state.get(answer_key)
+                if not chosen_label:
+                    st.warning("Pehle ek option select karo.")
+                else:
+                    chosen_letter = label_to_letter[chosen_label]
+                    correct_letter = question.get("correct_option")
+                    try:
+                        save_question_attempts([{
+                            "user_id": user_id,
+                            "source": "PYQ Vault",
+                            "question_key": f"pyq_{question_id}",
+                            "is_correct": chosen_letter == correct_letter
+                        }])
+                        st.session_state[feedback_key] = {
+                            "chosen": chosen_letter,
+                            "correct": correct_letter,
+                            "saved": True
+                        }
+                    except Exception as e:
+                        st.session_state[feedback_key] = {
+                            "chosen": chosen_letter,
+                            "correct": correct_letter,
+                            "saved": False,
+                            "error": str(e)
+                        }
+                    st.rerun()
 
-    st.markdown(
-        "<div class='card'>"
-        "<span class='pill'>PRACTICE SET</span>"
-        f"<h3>{subject} · {topic}</h3>"
-        "<p class='muted'>A focused practice area for chapter-wise JEE preparation.</p>"
-        "<p>Question bank integration is the next phase. Try the sample quiz in Quiz Arena.</p>"
-        "</div>",
-        unsafe_allow_html=True
-    )
+            feedback = st.session_state.get(feedback_key)
+            if feedback:
+                if feedback["chosen"] == feedback["correct"]:
+                    st.success("Correct answer! Great job.")
+                else:
+                    st.error(
+                        f"Incorrect. Correct answer: {feedback['correct']}. "
+                        f"{option_map.get(feedback['correct'], '')}"
+                    )
+                if feedback.get("saved"):
+                    st.caption("Your attempt has been saved to your RankUp account.")
+                else:
+                    st.warning("Answer feedback shown, but tracking save failed.")
+                    st.caption(feedback.get("error", "Unknown database error"))
 
-    if st.button("Open sample quiz"):
-        st.info("Select Quiz Arena in the sidebar to attempt the sample questions.")
+                if question.get("explanation"):
+                    with st.expander("View explanation", expanded=True):
+                        st.write(question["explanation"])
+                if question.get("source_reference"):
+                    st.caption(f"Source: {question['source_reference']}")
+        else:
+            st.warning("Question options are missing or incorrectly formatted in the database.")
+
+        st.markdown("---")
+        previous_col, next_col = st.columns(2)
+        with previous_col:
+            if st.button(
+                "← Previous", disabled=question_index == 0,
+                key=f"pyq_prev_{state_key}"
+            ):
+                st.session_state[state_key] = question_index - 1
+                st.rerun()
+        with next_col:
+            if st.button(
+                "Next →", disabled=question_index >= len(pyq_questions) - 1,
+                key=f"pyq_next_{state_key}"
+            ):
+                st.session_state[state_key] = question_index + 1
+                st.rerun()
 
 
 # =========================================================
@@ -1431,3 +1589,7 @@ st.markdown("---")
 st.caption(
     "RankUp · Prototype v0.5 | Personal tasks, student profiles and friends."
 )
+
+
+
+
