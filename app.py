@@ -1321,6 +1321,107 @@ elif page == "Profile":
     st.write(
         "Share this code with another RankUp student so they can send you a friend request."
     )
+                    ).upload(
+                        file_path,
+                        uploaded_photo.getvalue(),
+                        {
+                            "content-type": uploaded_photo.type,
+                            "upsert": "true"
+                        }
+                    )
+
+                    public_url = supabase.storage.from_(
+                        "rankup-avatars"
+                    ).get_public_url(file_path)
+
+                    supabase.table("profiles").update({
+                        "avatar_url": public_url
+                    }).eq("id", user_id).execute()
+
+                    st.session_state["flash_message"] = (
+                        "Profile photo updated successfully!"
+                    )
+                    st.rerun()
+
+                except Exception as e:
+                    st.error("Photo upload failed.")
+                    st.caption(str(e))
+
+    with right:
+        st.markdown("#### Personal information")
+
+        with st.form("profile_update_form"):
+            updated_name = st.text_input(
+                "Full name",
+                value=current_name
+            )
+
+            st.text_input(
+                "Email address",
+                value=user.email or "",
+                disabled=True
+            )
+
+            updated_mobile = st.text_input(
+                "Mobile number",
+                value=current_mobile,
+                placeholder="Enter your mobile number"
+            )
+
+            updated_exam = st.selectbox(
+                "Target exam",
+                ["JEE Main", "JEE Advanced", "JEE Main + Advanced"],
+                index=(
+                    ["JEE Main", "JEE Advanced", "JEE Main + Advanced"].index(
+                        current_exam
+                    )
+                    if current_exam in [
+                        "JEE Main",
+                        "JEE Advanced",
+                        "JEE Main + Advanced"
+                    ]
+                    else 2
+                )
+            )
+
+            updated_goal = st.text_area(
+                "Your study goal",
+                value=current_goal,
+                placeholder="e.g. Target IIT Delhi CSE in JEE Advanced 2027"
+            )
+
+            save_profile = st.form_submit_button(
+                "Save Profile",
+                use_container_width=True
+            )
+
+        if save_profile:
+            if not updated_name.strip():
+                st.warning("Name cannot be empty.")
+            else:
+                try:
+                    supabase.table("profiles").update({
+                        "full_name": updated_name.strip(),
+                        "mobile_number": updated_mobile.strip() or None,
+                        "target_exam": updated_exam,
+                        "study_goal": updated_goal.strip() or None
+                    }).eq("id", user_id).execute()
+
+                    st.session_state["flash_message"] = (
+                        "Your profile has been updated!"
+                    )
+                    st.rerun()
+
+                except Exception as e:
+                    st.error("Could not update your profile.")
+                    st.caption(str(e))
+
+    st.markdown("---")
+    st.markdown("#### Your RankUp Friend Code")
+
+    st.write(
+        "Share this code with another RankUp student so they can send you a friend request."
+    )
 
     st.code(current_code)
 
@@ -1328,6 +1429,14 @@ elif page == "Profile":
         "Your mobile number is not displayed in the Friends Zone."
     )
 
+
+# =========================================================
+# FOOTER
+# =========================================================
+st.markdown("---")
+st.caption(
+    "RankUp · Prototype v0.5 | Personal tasks, student profiles and friends."
+)
 
 # =========================================================
 # FOOTER
