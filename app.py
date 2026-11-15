@@ -1,160 +1,96 @@
-                elif len(signup_password) < 6:
-                    st.warning("Password must contain at least 6 characters.")
-                elif signup_password != confirm_password:
-                    st.warning("Passwords do not match.")
-                else:
-                    try:
-                        response = supabase.auth.sign_up({
-                            "email": signup_email.strip(),
-                            "password": signup_password,
-                            "options": {
-                                "data": {
-                                    "full_name": full_name.strip()
-                                }
-                            }
-                        })
+import streamlit as st
+import html
+from datetime import date
+from supabase import create_client, Client
 
-                        if response.user and response.session:
-                            st.session_state.access_token = response.session.access_token
-                            st.session_state.refresh_token = response.session.refresh_token
-                            st.session_state.user = response.user
-                            st.success("Account created successfully!")
-                            st.rerun()
+# =========================================================
+# PAGE CONFIGURATION
+# =========================================================
+st.set_page_config(
+    page_title="RankUp | JEE Prep Portal",
+    page_icon="🚀",
+    layout="wide"
+)
 
-                        elif response.user:
-                            st.success(
-                                "Account created. Please log in to continue."
-                            )
-                        else:
-                            st.error("Account could not be created.")
+# =========================================================
+# SESSION STATE
+# =========================================================
+defaults = {
+    "theme_mode": "Dark",
+    "access_token": None,
+    "refresh_token": None,
+    "user": None,
+    "answers": {},
+    "quiz_submitted": False,
+    "study_hours": 6.0,
+    "flash_message": None,
+}
 
-                    except Exception as e:
-                        st.error("Signup failed.")
-                        st.caption(str(e))
-
-        st.markdown("---")
-        st.caption("RankUp · Built for JEE aspirants")
-
-    st.stop()
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # =========================================================
-# LOGGED-IN USER AND PROFILE
+# SUPABASE CONNECTION
 # =========================================================
-user = st.session_state.user
-user_id = str(user.id)
-user_metadata = user.user_metadata or {}
-
-try:
-    profile_response = (
-        supabase.table("profiles")
-        .select("*")
-        .eq("id", user_id)
-        .execute()
+def get_supabase_client() -> Client:
+    return create_client(
+        st.secrets["SUPABASE_URL"].strip(),
+        st.secrets["SUPABASE_KEY"].strip()
     )
 
-    if not profile_response.data:
-        st.error("Your student profile was not found.")
-        st.info(
-            "Please check the profile creation trigger in Supabase."
-        )
-        st.stop()
 
-    profile = profile_response.data[0]
-
+try:
+    supabase = get_supabase_client()
 except Exception as e:
-    st.error("Could not load your student profile.")
+    st.error("Supabase connection could not be initialized.")
     st.caption(str(e))
     st.stop()
 
-student_name = (
-    profile.get("full_name")
-    or user_metadata.get("full_name")
-    or user.email
-)
-
 
 # =========================================================
-# DATABASE FUNCTIONS
+# RESTORE AUTH SESSION
 # =========================================================
-def load_tasks():
-    response = (
-        supabase.table("study_tasks")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=False)
-        .execute()
-    )
-    return response.data or []
-
-
-def save_task_status(task_id, widget_key, sync_key):
-    new_status = (
-        "Completed"
-        if st.session_state.get(widget_key, False)
-        else "Pending"
-    )
-
+if st.session_state.access_token and st.session_state.refresh_token:
     try:
-        result = (
-            supabase.table("study_tasks")
-            .update({"status": new_status})
-            .eq("id", task_id)
-            .eq("user_id", user_id)
-            .select("id")
-            .execute()
+        supabase.auth.set_session(
+            st.session_state.access_token,
+            st.session_state.refresh_token
         )
 
-        if not result.data:
-            raise Exception("Task update was not confirmed.")
+        response = supabase.auth.get_user()
+        st.session_state.user = response.user
 
-        st.session_state[sync_key] = new_status
-        st.session_state["task_error"] = None
+        current_session = supabase.auth.get_session()
 
-    except Exception as e:
-        st.session_state[sync_key] = None
-        st.session_state["task_error"] = str(e)
+        if current_session:
+            st.session_state.access_token = current_session.access_token
+            st.session_state.refresh_token = current_session.refresh_token
 
-
-def get_task_checkbox_keys(task, section):
-    task_id = str(task["id"])
-    db_status = task.get("status", "Pending")
-
-    widget_key = f"{section}_task_{task_id}"
-    sync_key = f"{section}_sync_{task_id}"
-
-    if (
-        widget_key not in st.session_state
-        or st.session_state.get(sync_key) != db_status
-    ):
-        st.session_state[widget_key] = db_status == "Completed"
-        st.session_state[sync_key] = db_status
-
-    return widget_key, sync_key
+    except Exception:
+        st.session_state.access_token = None
+        st.session_state.refresh_token = None
+        st.session_state.user = None
 
 
-def send_friend_request(receiver_id):
-    existing_outgoing = (
-        supabase.table("friend_requests")
-        .select("id,status")
-        .eq("sender_id", user_id)
-        .eq("receiver_id", receiver_id)
-        .execute()
-    )
+# =========================================================
+# THEME
+# =========================================================
+theme = st.session_state.theme_mode
 
-    existing_incoming = (
-        supabase.table("friend_requests")
-        .select("id,status")
-        .eq("sender_id", receiver_id)
-        .eq("receiver_id", user_id)
-        .execute()
-    )
-
-    if existing_outgoing.data or existing_incoming.data:
-        return False, "A request or friendship already exists."
-
-    supabase.table("friend_requests").insert({
-        "sender_id": user_id,
-        "receiver_id": receiver_id,
-        "status": "pending"
-    }).execute()
+if theme == "Dark":
+    page_bg = "#090d1b"
+    panel_bg = "#171f3b"
+    sidebar_bg = "#10162a"
+    text_color = "#eef1ff"
+    muted_color = "#98a7cf"
+    border_color = "#29365c"
+    metric_bg = "linear-gradient(145deg,#171f3b,#11182d)"
+else:
+    page_bg = "#f4f6fc"
+    panel_bg = "#ffffff"
+    sidebar_bg = "#e9edfa"
+    text_color = "#17213d"
+    muted_color = "#5c6885"
+    border_color = "#d8def0"
