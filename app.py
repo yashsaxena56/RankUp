@@ -1,4 +1,4 @@
-mport streamlit as st
+import streamlit as st
 import html
 from datetime import date
 from supabase import create_client, Client
